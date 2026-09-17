@@ -1,0 +1,19 @@
+{
+  "name": "@lolo/nn",
+  "version": "1.0.0",
+  "description": "Zero-dependency browser inference compatible with ch.lolo.nn JNN1 .nn models",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "serve": "node examples/server.js",
+    "maint:update": "ncu -u -t minor && npm install && npm audit fix && npm install"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

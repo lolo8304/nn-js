@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MNIST Browser Inference</title>
+    <style>
+        body { font: 16px system-ui; max-width: 800px; margin: 3rem auto; padding: 0 1rem; }
+        textarea, pre { width: 100%; box-sizing: border-box; padding: 1rem; }
+        pre { background: #f3f4f6; white-space: pre-wrap; }
+        button, input { font: inherit; margin: .5rem 0; padding: .5rem; }
+        canvas { display: block; width: 224px; height: 224px; image-rendering: pixelated; background: black; }
+        .canvases { display: flex; flex-wrap: wrap; gap: 2rem; }
+        .canvases section { flex: 1 1 224px; min-width: 0; }
+        #drawing { touch-action: none; cursor: crosshair; }
+    </style>
+</head>
+<body>
+<h1>MNIST: Java → Browser</h1>
+<p>The saved Java MNIST model and 100 example digits load automatically. Choose a sample to test recognition.</p>
+<label for="model">Load another MNIST model (.nn)</label>
+<input accept=".nn" id="model" type="file">
+<pre id="summary" role="status">Loading MNIST model…</pre>
+<div class="canvases">
+<section aria-label="Sample digit">
+<canvas id="digit" width="28" height="28" role="img" aria-label="MNIST digit preview"></canvas>
+<p id="sample" role="status">Loading samples…</p>
+<button disabled id="next">Next sample</button>
+<button disabled id="random">Random sample</button>
+<button disabled id="predict">Predict</button>
+</section>
+<section aria-label="Draw your own digit">
+<canvas id="drawing" width="28" height="28" aria-label="Draw a digit with the mouse or touch" aria-describedby="drawing-help"></canvas>
+<p id="drawing-help">Draw a digit (0–9), centered in the square.</p>
+<button disabled id="detect">Detect</button>
+<button id="clear">Clear</button>
+<pre id="drawing-output" aria-live="polite">Draw a digit, then click Detect.</pre>
+</section>
+</div>
+<pre id="output" aria-live="polite"></pre>
+<details>
+    <summary>Input (JSON batch of 784 pixels, normalized to 0–1)</summary>
+    <label for="input">Editable input; click Predict after changing it</label>
+    <textarea id="input" rows="6"></textarea>
+</details>
+<p>Samples come from the first 100 t10k images. The current Java example trains on t10k too, so these results are a functional check, not held-out accuracy.</p>
+<script type="module">
+import {Tensor, SequentialModel} from "../../src/index.js";
+
+const $ = selector => document.querySelector(selector);
+const summary = $("#summary"), output = $("#output"), input = $("#input");
+const predictButton = $("#predict"), nextButton = $("#next"), randomButton = $("#random");
+const drawing = $("#drawing"), drawingContext = drawing.getContext("2d");
+const detectButton = $("#detect"), drawingOutput = $("#drawing-output");
+let model, samples = [], sampleIndex = 0, sampleInput = "", loadVersion = 0;
+let activePointer = null, previousPoint = null;
+
+function clearDrawing() {
+    activePointer = null;
+    previousPoint = null;
+    drawingContext.fillStyle = "black";
+    drawingContext.fillRect(0, 0, 28, 28);
+    drawingOutput.textContent = "Draw a digit, then click Detect.";
+}
+
+function point(event) {
+    const bounds = drawing.getBoundingClientRect();
+    return [(event.clientX - bounds.left) * 28 / bounds.width,
+        (event.clientY - bounds.top) * 28 / bounds.height];
+}
+
+function drawTo(event) {
+    const current = point(event);
+    drawingContext.strokeStyle = drawingContext.fillStyle = "white";
+    drawingContext.lineWidth = 2;
+    drawingContext.lineCap = drawingContext.lineJoin = "round";
+    drawingContext.beginPath();
+    if (previousPoint) {
+        drawingContext.moveTo(...previousPoint);
+        drawingContext.lineTo(...current);
+        drawingContext.stroke();
+    } else {
+        drawingContext.arc(...current, 1, 0, Math.PI * 2);
+        drawingContext.fill();
+    }
+    previousPoint = current;
+    drawingOutput.textContent = "Click Detect to recognize your drawing.";
+}
+
+drawing.onpointerdown = event => {
+    if (event.button !== 0 || activePointer !== null) return;
+    event.preventDefault();
+    activePointer = event.pointerId;
+    drawing.setPointerCapture(activePointer);
+    drawTo(event);
+};
+drawing.onpointermove = event => {
+    if (event.pointerId === activePointer) drawTo(event);
+};
+drawing.onpointerup = event => {
+    if (event.pointerId !== activePointer) return;
+    drawTo(event);
+    activePointer = null;
+    previousPoint = null;
+    drawing.releasePointerCapture(event.pointerId);
+};
+drawing.onpointercancel = drawing.onlostpointercapture = () => {
+    activePointer = null;
+    previousPoint = null;
+};
+$("#clear").onclick = clearDrawing;
+detectButton.onclick = () => {
+    try {
+        const rgba = drawingContext.getImageData(0, 0, 28, 28).data;
+        const pixels = Array.from({length: 784}, (_, i) => rgba[i * 4] / 255);
+        input.value = JSON.stringify([pixels]);
+        input.closest("details").open = true;
+        output.textContent = "";
+        if (!pixels.some(value => value > 0)) {
+            drawingOutput.textContent = "Draw a digit first.";
+            return;
+        }
+        const [scores] = digitScores([pixels]);
+        drawingOutput.textContent = `Prediction: ${scores.indexOf(Math.max(...scores))}`;
+    } catch (error) {
+        drawingOutput.textContent = error.message;
+    }
+};
+clearDrawing();
+
+function digitScores(batch) {
+    const scores = model.predict(Tensor.of(batch)).toNestedArray();
+    if (scores.some(row => row.length !== 10 || row.some(value => !Number.isFinite(value)))) {
+        throw Error("Expected 10 finite digit scores from the MNIST model.");
+    }
+    return scores;
+}
+
+function predict() {
+    try {
+        const batch = JSON.parse(input.value);
+        if (!Array.isArray(batch) || !batch.length || batch.some(row =>
+            !Array.isArray(row) || row.length !== 784 || row.some(value =>
+                !Number.isFinite(value) || value < 0 || value > 1))) {
+            throw Error("Enter a batch of 784-pixel arrays with values between 0 and 1.");
+        }
+        const scores = digitScores(batch);
+        output.textContent = scores.map((row, i) => {
+            const digit = row.indexOf(Math.max(...row));
+            const expected = input.value === sampleInput ? samples[sampleIndex].label : null;
+            return `Prediction${scores.length > 1 ? ` ${i + 1}` : ""}: ${digit}` +
+                (expected === null ? "" : ` | Expected: ${expected} | ${digit === expected ? "Correct" : "Incorrect"}`) +
+                `\nDigit scores: ${row.map((value, digit) => `${digit}: ${value.toFixed(3)}`).join(", ")}`;
+        }).join("\n\n");
+    } catch (error) {
+        output.textContent = error.message;
+    }
+}
+
+function showSample(index) {
+    sampleIndex = index;
+    const sample = samples[index];
+    const context = $("#digit").getContext("2d");
+    const image = context.createImageData(28, 28);
+    sample.pixels.forEach((value, i) => {
+        image.data.set([value, value, value, 255], i * 4);
+    });
+    context.putImageData(image, 0, 0);
+    $("#digit").setAttribute("aria-label", `MNIST digit ${sample.label}`);
+    $("#sample").textContent = `Sample ${index + 1} / ${samples.length} — expected digit: ${sample.label}`;
+    sampleInput = JSON.stringify([sample.pixels.map(value => value / 255)]);
+    input.value = sampleInput;
+    output.textContent = "";
+    if (model) predict();
+}
+
+async function loadModel(source) {
+    const version = ++loadVersion;
+    model = undefined;
+    predictButton.disabled = true;
+    detectButton.disabled = true;
+    drawingOutput.textContent = "Loading model…";
+    summary.textContent = "Loading MNIST model…";
+    output.textContent = "";
+    try {
+        const loaded = await SequentialModel.load(source);
+        if (version !== loadVersion) return;
+        model = loaded;
+        detectButton.disabled = false;
+        drawingOutput.textContent = "Draw a digit, then click Detect.";
+        summary.textContent = model.summary();
+        predictButton.disabled = !samples.length;
+        if (samples.length) predict();
+    } catch (error) {
+        if (version !== loadVersion) return;
+        summary.textContent = `Could not load model: ${error.message}. Select a saved MNIST .nn file above.`;
+        drawingOutput.textContent = "Load a MNIST model to detect your drawing.";
+    }
+}
+
+$("#model").onchange = event => {
+    const file = event.target.files[0];
+    if (file) loadModel(file);
+};
+predictButton.onclick = predict;
+nextButton.onclick = () => showSample((sampleIndex + 1) % samples.length);
+randomButton.onclick = () => showSample(Math.floor(Math.random() * samples.length));
+
+async function loadSamples() {
+    try {
+        const response = await fetch(new URL("./mnist/samples.json", import.meta.url));
+        if (!response.ok) throw Error(`HTTP ${response.status}`);
+        samples = await response.json();
+        showSample(0);
+        nextButton.disabled = randomButton.disabled = false;
+        predictButton.disabled = !model;
+    } catch (error) {
+        $("#sample").textContent = `Could not load samples: ${error.message}. Serve this page with npm run serve.`;
+    }
+}
+
+await Promise.all([
+    loadModel(new URL("./mnist/mnist.nn", import.meta.url)),
+    loadSamples()
+]);
+</script>
+</body>
+</html>
