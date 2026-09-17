@@ -57,9 +57,15 @@ shows each digit, and compares its prediction with the expected label. Use **Nex
 or **Random sample** to test more digits. You can also select another MNIST `.nn` model
 or edit the normalized 784-pixel JSON batch.
 
+Draw your own digit beside the sample and click **Detect**. The drawing is resized to
+fit approximately 20×20 pixels while preserving its proportions, then centered by
+intensity-weighted center of mass within 28×28 pixels. Black padding and bilinear
+interpolation preserve grayscale values in 0–1. The existing JSON batch field opens
+with the exact processed input sent to the model. Sample digits are left unchanged.
+
 The bundled model is copied from `nn-java/mnist.nn`; the samples are the first 100
-t10k images. The current Java example trains on t10k, so this is a functional check,
-not a held-out accuracy evaluation. Copy a newly trained model over the bundled
+t10k images. Older models may have trained on t10k; the updated Java example uses
+separate training, validation, and test data. Copy a newly trained model over the bundled
 `examples/browser/mnist/mnist.nn` to update it.
 
 ## Test

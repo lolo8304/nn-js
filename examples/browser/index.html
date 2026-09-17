@@ -31,7 +31,7 @@
 </section>
 <section aria-label="Draw your own digit">
 <canvas id="drawing" width="28" height="28" aria-label="Draw a digit with the mouse or touch" aria-describedby="drawing-help"></canvas>
-<p id="drawing-help">Draw a digit (0–9), centered in the square.</p>
+<p id="drawing-help">Draw a digit (0–9). Detect automatically resizes and centers it.</p>
 <button disabled id="detect">Detect</button>
 <button id="clear">Clear</button>
 <pre id="drawing-output" aria-live="polite">Draw a digit, then click Detect.</pre>
@@ -43,9 +43,10 @@
     <label for="input">Editable input; click Predict after changing it</label>
     <textarea id="input" rows="6"></textarea>
 </details>
-<p>Samples come from the first 100 t10k images. The current Java example trains on t10k too, so these results are a functional check, not held-out accuracy.</p>
+<p>Samples come from the first 100 t10k images. Use a model trained on separate training data for a held-out check; older bundled models may have trained on these samples.</p>
 <script type="module">
 import {Tensor, SequentialModel} from "../../src/index.js";
+import {normalizeDigit} from "./normalize-digit.js";
 
 const $ = selector => document.querySelector(selector);
 const summary = $("#summary"), output = $("#output"), input = $("#input");
@@ -112,7 +113,7 @@ $("#clear").onclick = clearDrawing;
 detectButton.onclick = () => {
     try {
         const rgba = drawingContext.getImageData(0, 0, 28, 28).data;
-        const pixels = Array.from({length: 784}, (_, i) => rgba[i * 4] / 255);
+        const pixels = normalizeDigit(Array.from({length: 784}, (_, i) => rgba[i * 4] / 255));
         input.value = JSON.stringify([pixels]);
         input.closest("details").open = true;
         output.textContent = "";
